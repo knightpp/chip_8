@@ -32,7 +32,7 @@ impl PixelBuf {
                 if pixel {
                     let vbuf_pixel =
                         &mut self.gfx[(y as usize + yline) % 32][(x as usize + xline) % 64];
-                    if !flipped && (*vbuf_pixel == true) {
+                    if !flipped && *vbuf_pixel {
                         flipped = true;
                     }
 

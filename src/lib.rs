@@ -56,7 +56,7 @@ impl Chip8 {
         mem[..80].copy_from_slice(&FONTSET);
 
         Chip8 {
-            mem: mem,
+            mem,
             stack: [0; 32],
             regs: Registers::new(),
             delay_timer: 0,
@@ -247,7 +247,7 @@ impl Chip8 {
             // FX33
             [0xF, x, 0x3, 0x3] => {
                 let i = self.regs.i as usize;
-                self.mem[i + 0] = v![x] / 100;
+                self.mem[i] = v![x] / 100;
                 self.mem[i + 1] = (v![x] / 10) % 10;
                 self.mem[i + 2] = (v![x] % 100) % 10;
             }
@@ -288,6 +288,12 @@ impl Chip8 {
     }
 }
 
+impl Default for Chip8 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /**
 two bytes
 ```
@@ -297,12 +303,10 @@ two bytes
 ```
 **/
 fn word_to_nibbles([hi, lo]: &[u8; 2]) -> [u8; 4] {
-    let nibbles = [
+    [
         (hi & 0b1111_0000) >> 4,
         hi & 0b0000_1111,
         (lo & 0b1111_0000) >> 4,
         lo & 0b0000_1111,
-    ];
-
-    nibbles
+    ]
 }

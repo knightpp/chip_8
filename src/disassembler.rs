@@ -163,12 +163,12 @@ pub fn disassemble_file(mut file: impl std::io::Read) -> String {
             [0, nnn @ ..] => {
                 buf.push_str(&format!("{} {:03X}", "call", nnn.merge_nibbles()));
             }
-            left @ _ => {
+            left => {
                 //panic!("unknown instruction");
                 buf.push_str(&format!("UNKNOWN INSTRUCTION {:1X?}", left,));
             }
         }
-        buf.push_str("\n");
+        buf.push('\n');
 
         total_read += read;
         i += 1;
