@@ -45,9 +45,9 @@ impl MinifbEngine {
     fn draw_to_window(&mut self) -> Result<()> {
         for (y, row) in self.pbuf.gfx.iter().enumerate() {
             for (x, pixel) in row.iter().enumerate() {
-                let color = if *pixel { 0xFF } else { 0x0 };
-                for x_offset in 0..self.scale {
-                    for y_offset in 0..self.scale {
+                let color = if *pixel { 0xFF_FF_FF } else { 0x0 };
+                for x_offset in 2..self.scale - 2 {
+                    for y_offset in 2..self.scale - 2 {
                         self.buffer[(x * self.scale)
                             + x_offset
                             + (y * self.scale * self.width)

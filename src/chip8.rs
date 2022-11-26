@@ -1,10 +1,14 @@
-use crate::{traits::MergeNibbles, word_to_nibbles, Engine, FONTSET};
+use std::fmt;
+
+use comfy_table::Table;
+
+use crate::{word_to_nibbles, Engine, MergeNibbles, FONTSET};
 
 #[derive(Debug, Default)]
 struct Registers {
     v: [u8; 16],
     i: u16,
-    sp: u16,
+    sp: u8,
     pc: u16,
 }
 
@@ -17,13 +21,19 @@ impl Registers {
     }
 }
 
+#[derive(Default)]
+pub struct Quircks {
+    pub load_store: bool,
+}
+
 pub struct Chip8 {
     mem: [u8; 4096],
     regs: Registers,
-    stack: [u16; 32],
+    stack: [u16; 16],
     key_state: [bool; 16],
     delay_timer: u8,
     sound_timer: u8,
+    pub quircks: Quircks,
 }
 
 impl Chip8 {
@@ -33,11 +43,12 @@ impl Chip8 {
 
         Chip8 {
             mem,
-            stack: [0; 32],
+            stack: [0; 16],
             regs: Registers::new(),
             delay_timer: 0,
             sound_timer: 0,
             key_state: [false; 16],
+            quircks: Quircks::default(),
         }
     }
 
@@ -50,7 +61,8 @@ impl Chip8 {
     }
 
     fn jump(&mut self, address: u16) {
-        self.regs.pc = address;
+        // -2 because we unconditionally subtract every cycle
+        self.regs.pc = address - 2;
     }
 
     fn stack_push(&mut self, value: u16) {
@@ -61,6 +73,11 @@ impl Chip8 {
     fn stack_pop(&mut self) -> u16 {
         self.regs.sp -= 1;
         self.stack[self.regs.sp as usize]
+    }
+
+    fn call(&mut self, address: u16) {
+        self.stack_push(self.regs.pc + 2);
+        self.jump(address);
     }
 
     pub fn emulate_cycle<T: Engine>(&mut self, engine: &mut T) {
@@ -85,14 +102,14 @@ impl Chip8 {
                 self.jump(address);
             }
             // 0NNN Call
-            [0, nnn @ ..] => {
-                // self.stack_push(self.regs.pc);
-                // self.jump(nnn.merge_nibbles());
+            [0, _nnn @ ..] => {
+                todo!();
+                // self.call(nnn.merge_nibbles());
 
-                let mem_loc = nnn.merge_nibbles() as usize;
-                let address = ((self.mem[mem_loc] as u16) << 8) | (self.mem[mem_loc + 1] as u16);
-                self.stack_push(address);
-                self.jump(nnn.merge_nibbles());
+                // let mem_loc = nnn.merge_nibbles() as usize;
+                // let address = ((self.mem[mem_loc] as u16) << 8) | (self.mem[mem_loc + 1] as u16);
+                // self.stack_push(address);
+                // self.jump(nnn.merge_nibbles());
             }
             // 1NNN
             [1, nnn @ ..] => {
@@ -100,8 +117,7 @@ impl Chip8 {
             }
             // 2NNN
             [0x2, nnn @ ..] => {
-                self.stack_push(self.regs.pc);
-                self.jump(nnn.merge_nibbles());
+                self.call(nnn.merge_nibbles());
             }
             // 3XNN
             [0x3, x, nn @ ..] => {
@@ -141,15 +157,15 @@ impl Chip8 {
             [0x8, x, y, 0x3] => v![x] ^= v![y],
             // 8XY4
             [0x8, x, y, 0x4] => {
-                let res = v![x] as u16 + v![y] as u16;
-                v![x] = res as u8;
-                v![0xF] = ((res >> 8) > 0) as u8;
+                let sum = v![x] as u16 + v![y] as u16;
+                v![x] = sum as u8;
+                v![0xF] = (sum > 0xFF) as u8;
             }
             // 8XY5
             [0x8, x, y, 0x5] => {
                 let borrow = v![x] < v![y];
                 v![0xF] = !borrow as u8;
-                v![x] -= v![y];
+                v![x] = v![x].wrapping_sub(v![y]);
             }
             // 8XY6
             [0x8, x, y, 0x6] => {
@@ -224,8 +240,8 @@ impl Chip8 {
             [0xF, x, 0x3, 0x3] => {
                 let i = self.regs.i as usize;
                 self.mem[i] = v![x] / 100;
-                self.mem[i + 1] = (v![x] / 10) % 10;
-                self.mem[i + 2] = (v![x] % 100) % 10;
+                self.mem[i + 1] = (v![x] % 100) / 10;
+                self.mem[i + 2] = v![x] % 10;
             }
             // FX55
             [0xF, x, 0x5, 0x5] => {
@@ -235,7 +251,10 @@ impl Chip8 {
                 for (i, v) in self.regs.v[..=x as usize].iter().enumerate() {
                     self.mem[offset + i] = *v;
                 }
-                self.regs.i += x as u16 + 1;
+
+                if self.quircks.load_store {
+                    self.regs.i += x as u16 + 1;
+                }
             }
             // FX65
             [0xF, x, 0x6, 0x5] => {
@@ -245,14 +264,17 @@ impl Chip8 {
                 for (i, v) in self.regs.v[..=x as usize].iter_mut().enumerate() {
                     *v = self.mem[offset + i];
                 }
-                self.regs.i += x as u16 + 1;
+
+                if self.quircks.load_store {
+                    self.regs.i += x as u16 + 1;
+                }
             }
             _ => {
                 panic!("unknown instruction {:#02X?}", instruction);
             }
         }
 
-        self.regs.pc = self.regs.pc + 2;
+        self.regs.pc += 2;
     }
 
     pub fn decrement_timers(&mut self) {
@@ -260,7 +282,7 @@ impl Chip8 {
             self.delay_timer -= 1;
         }
         if self.sound_timer > 0 {
-            self.delay_timer -= 1;
+            self.sound_timer -= 1;
         }
     }
 }
@@ -268,5 +290,77 @@ impl Chip8 {
 impl Default for Chip8 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Debug for Chip8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut table = Table::new();
+        table
+            .set_header(vec![
+                "Other registers",
+                "V0-V7",
+                "V8-VF",
+                "Stack 0-7",
+                "Stack 8-F",
+            ])
+            .add_row(vec![
+                format!("I 0x{:04X}", self.regs.i),
+                format!("V0 0x{:02X}", self.regs.v[0]),
+                format!("V8 0x{:02X}", self.regs.v[8]),
+                format!("SP0 0x{:04X}", self.stack[0]),
+                format!("SP8 0x{:04X}", self.stack[8]),
+            ])
+            .add_row(vec![
+                format!("PC 0x{:04X}", self.regs.pc),
+                format!("V1 0x{:02X}", self.regs.v[1]),
+                format!("V9 0x{:02X}", self.regs.v[9]),
+                format!("SP1 0x{:04X}", self.stack[1]),
+                format!("SP9 0x{:04X}", self.stack[9]),
+            ])
+            .add_row(vec![
+                format!("DT 0x{:02X}", self.delay_timer),
+                format!("V2 0x{:02X}", self.regs.v[2]),
+                format!("VA 0x{:02X}", self.regs.v[0xA]),
+                format!("SP2 0x{:04X}", self.stack[2]),
+                format!("SPA 0x{:04X}", self.stack[0xA]),
+            ])
+            .add_row(vec![
+                format!("ST 0x{:02X}", self.sound_timer),
+                format!("V3 0x{:02X}", self.regs.v[3]),
+                format!("VB 0x{:02X}", self.regs.v[0xB]),
+                format!("SP3 0x{:04X}", self.stack[3]),
+                format!("SPB 0x{:04X}", self.stack[0xB]),
+            ])
+            .add_row(vec![
+                format!("SP 0x{:04X}", self.regs.sp),
+                format!("V4 0x{:02X}", self.regs.v[4]),
+                format!("VC 0x{:02X}", self.regs.v[0xC]),
+                format!("SP4 0x{:04X}", self.stack[4]),
+                format!("SPC 0x{:04X}", self.stack[0xC]),
+            ])
+            .add_row(vec![
+                String::new(),
+                format!("V5 0x{:02X}", self.regs.v[5]),
+                format!("VD 0x{:02X}", self.regs.v[0xD]),
+                format!("SP5 0x{:04X}", self.stack[5]),
+                format!("SPD 0x{:04X}", self.stack[0xD]),
+            ])
+            .add_row(vec![
+                String::new(),
+                format!("V6 0x{:02X}", self.regs.v[6]),
+                format!("VE 0x{:02X}", self.regs.v[0xE]),
+                format!("SP6 0x{:04X}", self.stack[6]),
+                format!("SPE 0x{:04X}", self.stack[0xE]),
+            ])
+            .add_row(vec![
+                String::new(),
+                format!("V7 0x{:02X}", self.regs.v[7]),
+                format!("VF 0x{:02X}", self.regs.v[0xF]),
+                format!("SP7 0x{:04X}", self.stack[7]),
+                format!("SPF 0x{:04X}", self.stack[0xF]),
+            ]);
+
+        f.write_fmt(format_args!("{}", table))
     }
 }
