@@ -3,6 +3,7 @@ pub use disassembler::disassemble_file;
 mod traits;
 pub use traits::Engine;
 use traits::*;
+pub mod engines;
 
 const FONTSET: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -34,7 +35,7 @@ struct Registers {
 impl Registers {
     fn new() -> Registers {
         Registers {
-            pc: 0x0200,
+            pc: 0x200,
             ..Default::default()
         }
     }
@@ -47,11 +48,10 @@ pub struct Chip8 {
     key_state: [bool; 16],
     delay_timer: u8,
     sound_timer: u8,
-    engine: Box<dyn Engine>,
 }
 
 impl Chip8 {
-    pub fn new(engine: Box<dyn Engine>) -> Chip8 {
+    pub fn new() -> Chip8 {
         let mut mem = [0; 4096];
         mem[..80].copy_from_slice(&FONTSET);
 
@@ -61,7 +61,6 @@ impl Chip8 {
             regs: Registers::new(),
             delay_timer: 0,
             sound_timer: 0,
-            engine,
             key_state: [false; 16],
         }
     }
@@ -88,7 +87,7 @@ impl Chip8 {
         self.stack[self.regs.sp as usize]
     }
 
-    pub fn emulate_cycle(&mut self) {
+    pub fn emulate_cycle<T: Engine>(&mut self, engine: &mut T) {
         macro_rules! v {
             ($name:tt) => {
                 self.regs.v[($name) as usize]
@@ -102,7 +101,7 @@ impl Chip8 {
         match word_to_nibbles(&instruction) {
             // 00E0
             [0, 0, 0xE, 0] => {
-                self.engine.clear_screen();
+                engine.clear_screen();
             }
             // 00EE
             [0, 0, 0xE, 0xE] => {
@@ -111,7 +110,12 @@ impl Chip8 {
             }
             // 0NNN Call
             [0, nnn @ ..] => {
-                self.stack_push(self.regs.pc);
+                // self.stack_push(self.regs.pc);
+                // self.jump(nnn.merge_nibbles());
+
+                let mem_loc = nnn.merge_nibbles() as usize;
+                let address = ((self.mem[mem_loc] as u16) << 8) | (self.mem[mem_loc + 1] as u16);
+                self.stack_push(address);
                 self.jump(nnn.merge_nibbles());
             }
             // 1NNN
@@ -120,9 +124,7 @@ impl Chip8 {
             }
             // 2NNN
             [0x2, nnn @ ..] => {
-                let mem_loc = nnn.merge_nibbles() as usize;
-                let address = ((self.mem[mem_loc] as u16) << 8) | (self.mem[mem_loc + 1] as u16);
-                self.stack_push(address);
+                self.stack_push(self.regs.pc);
                 self.jump(nnn.merge_nibbles());
             }
             // 3XNN
@@ -149,7 +151,7 @@ impl Chip8 {
             }
             // 7XNN
             [0x7, x, nn @ ..] => {
-                v![x] += nn.merge_nibbles();
+                v![x] = v![x].wrapping_add(nn.merge_nibbles());
             }
             // 8XY0
             [0x8, x, y, 0] => {
@@ -169,29 +171,25 @@ impl Chip8 {
             }
             // 8XY5
             [0x8, x, y, 0x5] => {
-                // TODO: borrow flag
-                let borrow = v![x] < v![y];
-                self.regs.v[0xF] = !borrow as u8;
-                v![x] -= v![y];
-            }
-            // 8XY6
-            [0x8, x, _y, 0x6] => {
-                let lsb = v![x] & 0b0000_0001;
-                v![0xF] = lsb;
-                v![x] >>= 1;
-            }
-            // 8XY7
-            [0x8, x, y, 0x7] => {
-                // TODO: borrow flag
                 let borrow = v![x] < v![y];
                 v![0xF] = !borrow as u8;
                 v![x] -= v![y];
             }
+            // 8XY6
+            [0x8, x, y, 0x6] => {
+                v![0xF] = v![y] & 0b0000_0001;
+                v![x] = v![y] >> 1;
+            }
+            // 8XY7
+            [0x8, x, y, 0x7] => {
+                let borrow = v![x] > v![y];
+                v![0xF] = !borrow as u8;
+                v![x] = v![y] - v![x];
+            }
             // 8XYE
-            [0x8, x, _y, _e] => {
-                let msb = v![x] & 0b1000_0000;
-                v![0xF] = msb;
-                v![x] <<= 1;
+            [0x8, x, y, 0xE] => {
+                v![0xF] = (v![y] & 0b1000_0000) >> 7;
+                v![x] = v![y] << 1;
             }
             // 9XY0
             [0x9, x, y, 0] => {
@@ -209,14 +207,13 @@ impl Chip8 {
             }
             // CXNN
             [0xC, x, nn @ ..] => {
-                v![x] = self.engine.rand() & nn.merge_nibbles();
+                v![x] = engine.rand() & nn.merge_nibbles();
             }
             // DXYN
             [0xD, x, y, n] => {
                 let i = self.regs.i as usize;
                 let flipped =
-                    self.engine
-                        .draw_sprite(v![x], v![y], n, &self.mem[i..i + (n as usize) * 8]);
+                    engine.draw_sprite(v![x], v![y], n, &self.mem[i..i + (n as usize) * 8]);
                 v![0xF] = flipped as u8;
             }
             // EX9E
@@ -236,7 +233,7 @@ impl Chip8 {
                 v![x] = self.delay_timer;
             }
             // FX0A
-            [0xF, x, 0, 0xA] => todo!(),
+            [0xF, _x, 0, 0xA] => todo!(),
             // FX15
             [0xF, x, 1, 0x5] => self.delay_timer = v![x],
             // FX18
@@ -256,23 +253,38 @@ impl Chip8 {
             }
             // FX55
             [0xF, x, 0x5, 0x5] => {
+                // Store the values of registers V0 to VX inclusive in memory starting at address I
+                // I is set to I + X + 1 after operation
                 let offset = self.regs.i as usize;
                 for (i, v) in self.regs.v[..=x as usize].iter().enumerate() {
                     self.mem[offset + i] = *v;
                 }
+                self.regs.i += x as u16 + 1;
             }
             // FX65
             [0xF, x, 0x6, 0x5] => {
+                // Fill registers V0 to VX inclusive with the values stored in memory starting at address I
+                // I is set to I + X + 1 after operation
                 let offset = self.regs.i as usize;
                 for (i, v) in self.regs.v[..=x as usize].iter_mut().enumerate() {
                     *v = self.mem[offset + i];
                 }
+                self.regs.i += x as u16 + 1;
             }
             _ => {
                 panic!("unknown instruction {:#02X?}", instruction);
             }
         }
         self.regs.pc += 2;
+    }
+
+    pub fn decrement_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+        if self.sound_timer > 0 {
+            self.delay_timer -= 1;
+        }
     }
 }
 
