@@ -9,13 +9,14 @@ use crossterm::{
     ExecutableCommand,
 };
 
-use crate::{Chip8, Engine};
+use crate::{Chip8, Engine, SimpleRng};
 
 use super::PixelBuf;
 
 pub struct CliEngine {
     pbuf: PixelBuf,
     stdout: Stdout,
+    rng: SimpleRng,
 }
 
 impl CliEngine {
@@ -23,6 +24,7 @@ impl CliEngine {
         CliEngine {
             pbuf: PixelBuf::new(),
             stdout,
+            rng: SimpleRng::new(),
         }
     }
 }
@@ -87,5 +89,9 @@ impl Engine for CliEngine {
         self.stdout.flush().unwrap();
 
         flipped
+    }
+
+    fn rand(&mut self) -> u8 {
+        self.rng.next()
     }
 }

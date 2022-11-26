@@ -1,5 +1,5 @@
-use crate::traits::*;
 use crate::word_to_nibbles;
+use crate::MergeNibbles;
 
 pub fn disassemble_file(mut file: impl std::io::Read) -> String {
     let mut instruction = [0_u8; 2];

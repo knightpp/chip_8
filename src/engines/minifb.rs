@@ -1,6 +1,6 @@
 use minifb::{self, Key, Window, WindowOptions};
 
-use crate::{Chip8, Engine};
+use crate::{Chip8, Engine, SimpleRng};
 
 use super::PixelBuf;
 
@@ -13,6 +13,7 @@ pub struct MinifbEngine {
     height: usize,
     scale: usize,
     window: Window,
+    rng: SimpleRng,
 }
 
 impl MinifbEngine {
@@ -31,6 +32,7 @@ impl MinifbEngine {
         window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
 
         Ok(MinifbEngine {
+            rng: SimpleRng::new(),
             buffer: vec![0; width * height],
             pbuf: PixelBuf::new(),
             height,
@@ -91,5 +93,9 @@ impl Engine for MinifbEngine {
         for el in self.buffer.iter_mut() {
             *el = 0;
         }
+    }
+
+    fn rand(&mut self) -> u8 {
+        self.rng.next()
     }
 }
