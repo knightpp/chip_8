@@ -55,9 +55,6 @@ impl MinifbEngine {
             }
         }
 
-        self.window
-            .update_with_buffer(&self.buffer, self.width, self.height)?;
-
         Ok(())
     }
 }
